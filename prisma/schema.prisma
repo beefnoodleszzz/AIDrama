@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkflowStatus {
+  DRAFT
+  PROMPT_READY
+  IMAGE_GENERATING
+  IMAGE_READY
+  VIDEO_GENERATING
+  VIDEO_READY
+  QC_PENDING
+  QC_PASS
+  QC_FAIL
+  LOCKED_FOR_RENDER
+  DONE
+  FAILED
+}
+
+model User {
+  id            String          @id @default(cuid())
+  phone         String?         @unique
+  email         String?         @unique
+  nickname      String?
+  avatarUrl     String?         @map("avatar_url")
+  plan          String          @default("free")
+  creditBalance Decimal         @default(0) @map("credit_balance") @db.Decimal(10, 2)
+  status        String          @default("active")
+  storyProjects StoryProject[]
+  creditLedger  CreditLedger[]
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model StoryProject {
+  id            String               @id @default(cuid())
+  userId        String               @map("user_id")
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  synopsis      String?              @db.Text
+  metadata      Json?
+  episodeTarget Int                  @default(1) @map("episode_target")
+  status        WorkflowStatus       @default(DRAFT)
+  episodes      StoryEpisodeScript[]
+  characters    CharacterProfile[]
+  workflowJobs  WorkflowJob[]
+  renderOutputs RenderOutput[]
+  exportJobs    ProjectExportJob[]
+  creditLedger  CreditLedger[]
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("story_projects")
+}
+
+model ProjectExportJob {
+  id          String      @id @default(cuid())
+  projectId   String      @map("project_id")
+  project     StoryProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  format      String
+  status      String      @default("queued")
+  fileUrl     String?     @map("file_url")
+  fileKey     String?     @map("file_key")
+  errorCode   String?     @map("error_code")
+  errorMessage String?    @map("error_message")
+  inputPayload Json?      @map("input_payload")
+  outputPayload Json?     @map("output_payload")
+  retries     Int         @default(0)
+  startedAt   DateTime?   @map("started_at")
+  finishedAt  DateTime?   @map("finished_at")
+  durationMs  Int?        @map("duration_ms")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  @@index([projectId, createdAt])
+  @@index([projectId, status])
+  @@map("project_export_jobs")
+}
+
+model CharacterProfile {
+  id                String       @id @default(cuid())
+  projectId         String       @map("project_id")
+  project           StoryProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name              String
+  role              String?
+  appearanceLock    String?      @map("appearance_lock") @db.Text
+  outfitLock        String?      @map("outfit_lock") @db.Text
+  negativePrompt    String?      @map("negative_prompt") @db.Text
+  referenceImageUrl String?      @map("reference_image_url")
+  metadata          Json?
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  @@index([projectId])
+  @@map("character_profiles")
+}
+
+model StoryEpisodeScript {
+  id             String         @id @default(cuid())
+  projectId      String         @map("project_id")
+  project        StoryProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeNo      Int            @map("episode_no")
+  title          String?
+  sourceType     String         @default("imported") @map("source_type")
+  rawScript      String         @map("raw_script") @db.Text
+  structuredData Json?          @map("structured_data")
+  status         WorkflowStatus @default(DRAFT)
+  shots          StoryShot[]
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@unique([projectId, episodeNo])
+  @@index([projectId])
+  @@map("story_episode_scripts")
+}
+
+model StoryShot {
+  id              String            @id @default(cuid())
+  episodeScriptId String            @map("episode_script_id")
+  episodeScript   StoryEpisodeScript @relation(fields: [episodeScriptId], references: [id], onDelete: Cascade)
+  shotNo          Int               @map("shot_no")
+  status          WorkflowStatus    @default(DRAFT)
+  durationSeconds Float             @default(3) @map("duration_seconds")
+  shotType        String?           @map("shot_type")
+  cameraLanguage  String?           @map("camera_language")
+  continuityHint  String?           @map("continuity_hint") @db.Text
+  prompt          ShotPrompt?
+  imageAssets     ShotImageAsset[]
+  videoAssets     ShotVideoAsset[]
+  audioAssets     StoryAudioAsset[]
+  qcReports       QcReport[]
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@unique([episodeScriptId, shotNo])
+  @@index([status])
+  @@map("story_shots")
+}
+
+model StoryAudioAsset {
+  id         String    @id @default(cuid())
+  shotId     String    @map("shot_id")
+  shot       StoryShot @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  version    Int       @default(1)
+  audioUrl   String    @map("audio_url")
+  provider   String?
+  model      String?
+  durationMs Int?      @map("duration_ms")
+  metadata   Json?
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([shotId, isActive])
+  @@map("story_audio_assets")
+}
+
+model ShotPrompt {
+  id              String    @id @default(cuid())
+  shotId          String    @unique @map("shot_id")
+  shot            StoryShot @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  promptText      String    @map("prompt_text") @db.Text
+  promptJson      Json?     @map("prompt_json")
+  generationModel String?   @map("generation_model")
+  promptVersion   String    @default("v1") @map("prompt_version")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("shot_prompts")
+}
+
+model ShotImageAsset {
+  id        String    @id @default(cuid())
+  shotId    String    @map("shot_id")
+  shot      StoryShot @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  version   Int       @default(1)
+  imageUrl  String    @map("image_url")
+  provider  String?
+  model     String?
+  seed      String?
+  metadata  Json?
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([shotId, isActive])
+  @@map("shot_image_assets")
+}
+
+model ShotVideoAsset {
+  id        String    @id @default(cuid())
+  shotId    String    @map("shot_id")
+  shot      StoryShot @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  version   Int       @default(1)
+  videoUrl  String    @map("video_url")
+  provider  String?
+  model     String?
+  metadata  Json?
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([shotId, isActive])
+  @@map("shot_video_assets")
+}
+
+model WorkflowJob {
+  id              String         @id @default(cuid())
+  projectId       String         @map("project_id")
+  project         StoryProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeScriptId String?        @map("episode_script_id")
+  shotId          String?        @map("shot_id")
+  jobType         String         @map("job_type")
+  status          WorkflowStatus @default(DRAFT)
+  provider        String?
+  model           String?
+  estimatedCost   Decimal?       @map("estimated_cost") @db.Decimal(10, 2)
+  actualCost      Decimal?       @map("actual_cost") @db.Decimal(10, 2)
+  traceId         String?        @map("trace_id")
+  startedAt       DateTime?      @map("started_at")
+  finishedAt      DateTime?      @map("finished_at")
+  durationMs      Int?           @map("duration_ms")
+  inputPayload    Json?          @map("input_payload")
+  outputPayload   Json?          @map("output_payload")
+  retries         Int            @default(0)
+  errorCode       String?        @map("error_code")
+  errorMessage    String?        @map("error_message")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([projectId, status])
+  @@index([shotId, status])
+  @@map("workflow_jobs")
+}
+
+model QcReport {
+  id        String    @id @default(cuid())
+  shotId    String    @map("shot_id")
+  shot      StoryShot @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  result    String
+  score     Float?
+  issues    Json?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([shotId, createdAt])
+  @@map("qc_reports")
+}
+
+model RenderOutput {
+  id        String         @id @default(cuid())
+  projectId String         @map("project_id")
+  project   StoryProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  episodeNo Int            @map("episode_no")
+  fileUrl   String         @map("file_url")
+  status    WorkflowStatus @default(DRAFT)
+  metadata  Json?
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@index([projectId, episodeNo])
+  @@map("render_outputs")
+}
+
+model CreditLedger {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId       String?      @map("project_id")
+  project         StoryProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  generationJobId String?      @map("generation_job_id")
+  changeType      String       @map("change_type")
+  amount          Decimal      @db.Decimal(10, 2)
+  balanceAfter    Decimal      @map("balance_after") @db.Decimal(10, 2)
+  reason          String?
+  metadata        Json?
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@index([projectId])
+  @@index([generationJobId])
+  @@map("credit_ledger")
+}
